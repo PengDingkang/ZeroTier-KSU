@@ -362,7 +362,7 @@ window.orbitMoon = async function() {
     toast('Please enter a valid 10-char moon ID', true);
     return;
   }
-  const result = await ztApi(`/moon/${moonId}`, 'POST');
+  const result = await ztApi(`/moon/${moonId}`, 'POST', {seed: moonId});
   if (result) {
     toast(`Orbiting moon ${moonId}`);
     input.value = '';
