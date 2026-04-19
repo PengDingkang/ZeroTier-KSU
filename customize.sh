@@ -59,12 +59,17 @@ fi
 
 # install binary to module system/bin overlay
 ui_print "- Installing binaries"
+# overlay mount (works when system overlay is available)
 mkdir -p "$MODPATH/system/bin"
-mv -f "$MODPATH/zerotier-one" "$MODPATH/system/bin/"
-# create symlinks for CLI subcommands
+cp -f "$MODPATH/zerotier-one" "$MODPATH/system/bin/"
 ln -sf zerotier-one "$MODPATH/system/bin/zerotier-cli"
 ln -sf zerotier-one "$MODPATH/system/bin/zerotier-idtool"
-mv -f "$MODPATH/zerotier" "$MODPATH/system/bin/"
+cp -f "$MODPATH/zerotier" "$MODPATH/system/bin/"
+# fallback: also install to data dir (works without overlay/magic mount)
+cp -f "$MODPATH/zerotier-one" "$zt_data/zerotier-one"
+cp -f "$MODPATH/zerotier" "$zt_data/zerotier"
+chmod 755 "$zt_data/zerotier-one" "$zt_data/zerotier"
+rm -f "$MODPATH/zerotier-one" "$MODPATH/zerotier"
 
 # permissions
 ui_print "- Setting permissions"

@@ -2,6 +2,14 @@
 
 path="/data/adb/zerotier"
 bin_name="zerotier-one"
+
+# resolve binary path: prefer PATH, fallback to data dir
+if command -v "$bin_name" >/dev/null 2>&1; then
+  bin_path="$bin_name"
+else
+  bin_path="$path/$bin_name"
+fi
+
 pid_file="$path/zerotier-one.pid"
 token_file="$path/authtoken.secret"
 autostart_file="$path/autostart.conf"
@@ -115,7 +123,7 @@ start_service() {
   fi
   mkdir -p "$path/networks.d" "$path/moons.d"
   chmod 700 "$path"
-  nohup "$bin_name" "$path" > /dev/null 2> "$log_file" &
+  nohup "$bin_path" "$path" > /dev/null 2> "$log_file" &
   echo "$!" > "$pid_file"
   sleep 2
   ip rule add from all lookup main pref 1 2>/dev/null
