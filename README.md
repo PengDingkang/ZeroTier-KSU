@@ -99,3 +99,9 @@ KernelSU 用户在模块列表中可直接看到运行状态和 IP 信息。
 - APatch
 - Android ≥ 9 (API 28)
 - arm64 设备
+
+## License
+
+本项目（模块脚本、WebUI 等）采用 [MIT License](LICENSE)。
+
+`zerotier-one` 二进制由 CI 从 [ZeroTier 上游源码](https://github.com/zerotier/ZeroTierOne) 编译，受其 [BSL 1.1 许可证](https://github.com/zerotier/ZeroTierOne/blob/dev/LICENSE.txt) 约束。
