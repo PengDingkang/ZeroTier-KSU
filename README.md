@@ -24,21 +24,12 @@
 
 ## 安装
 
-1. 获取 `zerotier-one` 的 aarch64 静态编译二进制（见下方说明）
-2. 将 `zerotier-one` 放入模块根目录
-3. 打包为 zip，在 Magisk/KSU/APatch Manager 中刷入
-4. 运行 `zerotier start` 启动服务
-5. 运行 `zerotier join <network_id>` 加入网络
+1. 从 [Releases](../../releases) 下载 zip（已包含编译好的 `zerotier-one`）
+2. 在 Magisk/KSU/APatch Manager 中刷入
+3. 运行 `zerotier start` 启动服务
+4. 运行 `zerotier join <network_id>` 加入网络（或在 WebUI 中操作）
 
 > ⚠ 首次安装会自动启用开机自启。你可以在 WebUI 或命令行中随时关闭。
-
-### 获取 zerotier-one 二进制
-
-ZeroTier 官方未提供 Android aarch64 的独立二进制，你需要自行编译或从社区获取：
-
-- 使用 musl + aarch64 交叉编译工具链从 [ZeroTier 源码](https://github.com/zerotier/ZeroTierOne) 编译
-- 从社区 Android 移植项目获取
-- 确保是**静态链接**的可执行文件
 
 ## 管理
 
