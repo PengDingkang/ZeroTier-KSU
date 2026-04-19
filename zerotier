@@ -113,7 +113,8 @@ start_service() {
     echo "${bin_name} is already running"
     return
   fi
-  mkdir -p "$path"
+  mkdir -p "$path/networks.d" "$path/moons.d"
+  chmod 700 "$path"
   nohup "$bin_name" "$path" > /dev/null 2> "$log_file" &
   echo "$!" > "$pid_file"
   sleep 2
