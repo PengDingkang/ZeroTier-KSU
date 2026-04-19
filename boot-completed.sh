@@ -30,8 +30,11 @@
         nets=$(curl -sf -H "X-ZT1-Auth: ${token}" http://127.0.0.1:9993/network 2>/dev/null)
         # extract first assigned IP
         ip=$(echo "$nets" | grep -o '"assignedAddresses":\["[^"]*"' | head -1 | sed 's/.*\["\([^/]*\).*/\1/')
-        [ -n "$ip" ] && ksud module config set override.description "✅ Running | IP: ${ip}" 2>/dev/null || \
+        if [ -n "$ip" ]; then
+          ksud module config set override.description "✅ Running | IP: ${ip}" 2>/dev/null
+        else
           ksud module config set override.description "✅ Running" 2>/dev/null
+        fi
       else
         ksud module config set override.description "✅ Running" 2>/dev/null
       fi

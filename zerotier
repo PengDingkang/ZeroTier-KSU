@@ -63,8 +63,11 @@ update_desc() {
   export KSU_MODULE="ZeroTier-KSU"
   if bin_status; then
     ip=$(zt_api "/network" | grep -o '"assignedAddresses":\["[^"]*"' | head -1 | sed 's/.*\["\([^/]*\).*/\1/')
-    [ -n "$ip" ] && ksud module config set override.description "✅ Running | IP: ${ip}" 2>/dev/null || \
+    if [ -n "$ip" ]; then
+      ksud module config set override.description "✅ Running | IP: ${ip}" 2>/dev/null
+    else
       ksud module config set override.description "✅ Running" 2>/dev/null
+    fi
   else
     ksud module config set override.description "⏹ Stopped" 2>/dev/null
   fi
