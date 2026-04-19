@@ -163,6 +163,8 @@ h2 { font-size: 18px; margin-bottom: 12px; }
 import { exec } from 'https://esm.sh/kernelsu';
 
 const ZT_DATA = '/data/adb/zerotier';
+const ZT_CMD_FALLBACK = '/data/adb/zerotier/zerotier';
+let ztCmd = 'zerotier';
 
 async function run(cmd) {
   try {
@@ -172,6 +174,14 @@ async function run(cmd) {
     return { errno: -1, stdout: '', stderr: e.message };
   }
 }
+
+// detect if zerotier command is available, fallback to data dir
+async function initCmd() {
+  const r = await run('which zerotier 2>/dev/null || command -v zerotier 2>/dev/null');
+  if (!r.stdout.trim()) ztCmd = ZT_CMD_FALLBACK;
+}
+
+function zt(args) { return `${ztCmd} ${args}`; }
 
 async function ztApi(path, method, body) {
   const r = await run(`cat ${ZT_DATA}/authtoken.secret 2>/dev/null`);
@@ -198,7 +208,7 @@ function stripAnsi(text) {
 
 // --- Refresh ---
 async function refresh() {
-  const st = await run('zerotier status');
+  const st = await run(zt('status'));
   const running = st.stdout.includes('running');
   document.getElementById('statusBadge').innerHTML =
     `<span class="status-dot ${running ? 'on' : 'off'}"></span>${running ? 'Running' : 'Stopped'}`;
@@ -322,7 +332,7 @@ window.control = async function(action) {
   const btn = event.target;
   btn.disabled = true;
   btn.textContent = '...';
-  await run(`zerotier ${action}`);
+  await run(zt(action));
   await new Promise(r => setTimeout(r, 2000));
   await refresh();
   btn.disabled = false;
@@ -336,7 +346,7 @@ window.joinNetwork = async function() {
     toast('Please enter a valid 16-char network ID', true);
     return;
   }
-  const r = await run(`zerotier join ${nwid}`);
+  const r = await run(zt(`join ${nwid}`));
   if (r.stdout.includes('Joined') || r.stdout.includes('200')) {
     toast(`Joined network ${nwid}`);
     input.value = '';
@@ -349,7 +359,7 @@ window.joinNetwork = async function() {
 
 window.leaveNetwork = async function(nwid) {
   if (!confirm(`Leave network ${nwid}?`)) return;
-  await run(`zerotier leave ${nwid}`);
+  await run(zt(`leave ${nwid}`));
   toast(`Left network ${nwid}`);
   await new Promise(r => setTimeout(r, 500));
   await refresh();
@@ -473,8 +483,10 @@ document.getElementById('orbitInput').addEventListener('keydown', e => {
   if (e.key === 'Enter') orbitMoon();
 });
 
-refresh();
-setInterval(refresh, 10000);
+initCmd().then(() => {
+  refresh();
+  setInterval(refresh, 10000);
+});
 </script>
 </body>
 </html>
