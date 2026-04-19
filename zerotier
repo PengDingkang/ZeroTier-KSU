@@ -1,0 +1,185 @@
+#!/system/bin/sh
+
+path="/data/adb/zerotier"
+bin_name="zerotier-one"
+pid_file="$path/zerotier-one.pid"
+token_file="$path/authtoken.secret"
+autostart_file="$path/autostart.conf"
+log_file="$path/error.log"
+
+# find busybox across Magisk/KSU/APatch
+for bb in /data/adb/magisk/busybox /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox; do
+  [ -f "$bb" ] && busybox="$bb" && break
+done
+# fallback to PATH
+[ -z "$busybox" ] && busybox="busybox"
+
+bin_status() {
+  [ "$($busybox pidof "$bin_name")" ] && return 0 || return 1
+}
+
+get_autostart() {
+  AUTO_START=1
+  # shellcheck disable=SC1090
+  [ -f "$autostart_file" ] && . "$autostart_file"
+  echo "${AUTO_START:-1}"
+}
+
+set_autostart() {
+  mkdir -p "$path"
+  printf "AUTO_START=%s\n" "$1" > "$autostart_file"
+}
+
+zt_api() {
+  if [ ! -f "$token_file" ]; then
+    echo "ERROR: auth token not found (service not started yet?)"
+    return 1
+  fi
+  token=$(cat "$token_file")
+  curl -sf -H "X-ZT1-Auth: ${token}" "http://127.0.0.1:9993${1}" 2>/dev/null
+}
+
+zt_api_post() {
+  if [ ! -f "$token_file" ]; then
+    echo "ERROR: auth token not found"
+    return 1
+  fi
+  token=$(cat "$token_file")
+  curl -sf -X POST -H "X-ZT1-Auth: ${token}" -d "${2:-{}}" "http://127.0.0.1:9993${1}" 2>/dev/null
+}
+
+zt_api_delete() {
+  if [ ! -f "$token_file" ]; then
+    echo "ERROR: auth token not found"
+    return 1
+  fi
+  token=$(cat "$token_file")
+  curl -sf -X DELETE -H "X-ZT1-Auth: ${token}" "http://127.0.0.1:9993${1}" 2>/dev/null
+}
+
+# update KSU module description
+update_desc() {
+  command -v ksud >/dev/null 2>&1 || return
+  export KSU_MODULE="ZeroTier-KSU"
+  if bin_status; then
+    ip=$(zt_api "/network" | grep -o '"assignedAddresses":\["[^"]*"' | head -1 | sed 's/.*\["\([^/]*\).*/\1/')
+    [ -n "$ip" ] && ksud module config set override.description "✅ Running | IP: ${ip}" 2>/dev/null || \
+      ksud module config set override.description "✅ Running" 2>/dev/null
+  else
+    ksud module config set override.description "⏹ Stopped" 2>/dev/null
+  fi
+}
+
+display_bin_status() {
+  if bin_status; then
+    printf "\033[32m● zerotier-one is running (pid: %s)\033[0m\n" "$($busybox pidof "$bin_name")"
+    # show node info
+    info=$(zt_api "/status")
+    if [ -n "$info" ]; then
+      node_id=$(echo "$info" | grep -o '"address":"[^"]*"' | sed 's/"address":"//;s/"//')
+      version=$(echo "$info" | grep -o '"version":"[^"]*"' | sed 's/"version":"//;s/"//')
+      printf "  Node ID: %s\n" "$node_id"
+      printf "  Version: %s\n" "$version"
+    fi
+    # show joined networks
+    nets=$(zt_api "/network")
+    if [ -n "$nets" ] && [ "$nets" != "[]" ]; then
+      printf "  Networks:\n"
+      echo "$nets" | grep -o '"nwid":"[^"]*"\|"name":"[^"]*"\|"status":"[^"]*"\|"assignedAddresses":\[[^]]*\]' | \
+        paste - - - - 2>/dev/null | while IFS= read -r line; do
+          nwid=$(echo "$line" | grep -o '"nwid":"[^"]*"' | sed 's/"nwid":"//;s/"//')
+          name=$(echo "$line" | grep -o '"name":"[^"]*"' | sed 's/"name":"//;s/"//')
+          status=$(echo "$line" | grep -o '"status":"[^"]*"' | sed 's/"status":"//;s/"//')
+          addrs=$(echo "$line" | grep -o '"assignedAddresses":\[[^]]*\]' | sed 's/"assignedAddresses":\[//;s/\]//;s/"//g')
+          printf "    %s (%s) [%s] %s\n" "$nwid" "$name" "$status" "$addrs"
+        done
+    fi
+  else
+    printf "\033[31m● zerotier-one is stopped\033[0m\n"
+  fi
+  if [ "$(get_autostart)" = "1" ]; then
+    printf "● boot auto start: enabled\n"
+  else
+    printf "● boot auto start: disabled\n"
+  fi
+  update_desc
+}
+
+start_service() {
+  if bin_status; then
+    echo "${bin_name} is already running"
+    return
+  fi
+  mkdir -p "$path"
+  nohup "$bin_name" -p"$path" > /dev/null 2> "$log_file" &
+  echo "$!" > "$pid_file"
+  sleep 2
+  ip rule add from all lookup main pref 1 2>/dev/null
+  if bin_status; then
+    echo "start success"
+  else
+    echo "start failed, check $log_file"
+  fi
+}
+
+stop_service() {
+  if bin_status; then
+    echo "stopping ${bin_name}..."
+    kill "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null || killall "$bin_name" 2>/dev/null
+    i=0
+    while bin_status && [ $i -lt 20 ]; do
+      sleep 0.5
+      i=$((i + 1))
+    done
+    bin_status && kill -9 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null
+    ip rule del from all lookup main pref 1 2>/dev/null
+  else
+    echo "${bin_name} is already stopped"
+  fi
+  rm -f "$pid_file" 2>/dev/null
+}
+
+join_network() {
+  if [ -z "$1" ]; then
+    echo "Usage: zerotier join <network_id>"
+    return 1
+  fi
+  if ! bin_status; then
+    echo "ERROR: zerotier-one is not running, start it first"
+    return 1
+  fi
+  result=$(zt_api_post "/network/$1")
+  if [ -n "$result" ]; then
+    echo "Joined network $1"
+    # persist network
+    echo "{}" > "$path/networks.d/$1.conf" 2>/dev/null
+  else
+    echo "Failed to join network $1"
+  fi
+}
+
+leave_network() {
+  if [ -z "$1" ]; then
+    echo "Usage: zerotier leave <network_id>"
+    return 1
+  fi
+  if ! bin_status; then
+    echo "ERROR: zerotier-one is not running"
+    return 1
+  fi
+  zt_api_delete "/network/$1" > /dev/null
+  rm -f "$path/networks.d/$1.conf" 2>/dev/null
+  echo "Left network $1"
+}
+
+case "$1" in
+  start)     start_service; display_bin_status ;;
+  stop)      stop_service; display_bin_status ;;
+  restart)   stop_service; start_service; display_bin_status ;;
+  status)    display_bin_status ;;
+  enable)    set_autostart 1; echo "boot auto start: enabled" ;;
+  disable)   set_autostart 0; echo "boot auto start: disabled" ;;
+  join)      join_network "$2" ;;
+  leave)     leave_network "$2" ;;
+  *)         echo "Usage: zerotier {start|stop|restart|status|enable|disable|join|leave}" ;;
+esac

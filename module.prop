@@ -1,0 +1,7 @@
+id=ZeroTier-KSU
+name=ZeroTier KSU
+version=v1.0.0
+versionCode=10000
+author=mew
+description=Use ZeroTier VPN on Android via KSU/APatch/Magisk with WebUI (core v1.16.0)
+updateJson=https://raw.githubusercontent.com/mew/ZeroTier-KSU/main/update.json
