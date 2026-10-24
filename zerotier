@@ -11,6 +11,8 @@ pid_file="$path/zerotier-one.pid"
 token_file="$path/authtoken.secret"
 autostart_file="$path/autostart.conf"
 log_file="$path/error.log"
+# Keep service policy separate from WireGuard (pref 1) and EasyTier (1001).
+rule_priority=1002
 
 # find busybox across Magisk/KSU/APatch
 for bb in /data/adb/magisk/busybox /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox; do
@@ -237,8 +239,8 @@ start_service() {
   nohup "$bin_path" "$path" > /dev/null 2> "$log_file" &
   echo "$!" > "$pid_file"
   sleep 2
-  ip rule add from all lookup main pref 1 2>/dev/null
   if bin_status; then
+    ip rule add from all lookup main pref "$rule_priority" 2>/dev/null || true
     echo "start success"
   else
     echo "start failed, check $log_file"
@@ -255,10 +257,10 @@ stop_service() {
       i=$((i + 1))
     done
     bin_status && kill -9 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null
-    ip rule del from all lookup main pref 1 2>/dev/null
   else
     echo "${bin_name} is already stopped"
   fi
+  ip rule del from all lookup main pref "$rule_priority" 2>/dev/null || true
   rm -f "$pid_file" 2>/dev/null
 }
 

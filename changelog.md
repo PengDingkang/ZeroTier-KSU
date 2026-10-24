@@ -2,6 +2,7 @@
 
 **Upgrade notice: shell command mounting defaults to OFF for new installs and legacy upgrades without a saved preference.** After reboot, use `/data/adb/zerotier/zerotier` from a root shell and update scripts that relied on short command names. Previously saved mount choices are preserved.
 
+- Use a separate main-table policy priority for this service so stopping it preserves WireGuard and other modules; add lifecycle routing regression coverage.
 - Update the bundled ZeroTier core from `1.16.0` to the official `1.16.2` release tag, pinned to commit `fc5c3ec22090b5b2a0f274e863651fe9ca489bf4`.
 - Add the module-wide **Shell Command Mount** switch and `zerotier mount {enable|disable|status|supported}` CLI commands; switching requires a reboot.
 - Disable the option and reject CLI enable requests on KernelSU without an enabled mounting metamodule. Magisk/APatch keep their built-in mounting support.
