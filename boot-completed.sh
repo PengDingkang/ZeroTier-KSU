@@ -16,7 +16,7 @@
   fi
   [ "$auto_start" = "1" ] || exit 0
 
-  zerotier start
+  /data/adb/zerotier/zerotier start
 
   # update KSU description
   if command -v ksud >/dev/null 2>&1; then

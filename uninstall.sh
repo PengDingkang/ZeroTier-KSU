@@ -8,3 +8,5 @@ killall zerotier-one 2>/dev/null
 # remove fallback binaries (keep config/identity)
 rm -f /data/adb/zerotier/zerotier-one
 rm -f /data/adb/zerotier/zerotier
+rm -f /data/adb/zerotier/zerotier-cli
+rm -f /data/adb/zerotier/zerotier-idtool

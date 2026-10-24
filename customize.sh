@@ -22,10 +22,13 @@ fi
 
 # detect environment
 if [ "$KSU" = true ]; then
+  root_framework=kernelsu
   ui_print "- KernelSU version: $KSU_VER ($KSU_VER_CODE)"
 elif [ "$APATCH" = true ]; then
+  root_framework=apatch
   ui_print "- APatch detected"
 else
+  root_framework=magisk
   ui_print "- Magisk version: $MAGISK_VER ($MAGISK_VER_CODE)"
 fi
 
@@ -37,6 +40,8 @@ if [ ! -d "$zt_data" ]; then
   mkdir -p "$zt_data/networks.d" "$zt_data/moons.d"
   set_perm "$zt_data" 0 0 0755
 fi
+
+printf '%s\n' "$root_framework" > "$zt_data/root_framework" || abort "! Cannot save root framework"
 
 # preserve existing identity and planet
 if [ ! -f "$zt_data/identity.secret" ]; then
@@ -57,27 +62,40 @@ if [ ! -f "$zt_data/autostart.conf" ]; then
   ui_print "- Auto-start is enabled by default"
 fi
 
-# install binary to module system/bin overlay
-ui_print "- Installing binaries"
-# overlay mount (works when system overlay is available)
-mkdir -p "$MODPATH/system/bin"
-cp -f "$MODPATH/zerotier-one" "$MODPATH/system/bin/"
-ln -sf zerotier-one "$MODPATH/system/bin/zerotier-cli"
-ln -sf zerotier-one "$MODPATH/system/bin/zerotier-idtool"
-cp -f "$MODPATH/zerotier" "$MODPATH/system/bin/"
-# fallback: also install to data dir (works without overlay/magic mount)
-cp -f "$MODPATH/zerotier-one" "$zt_data/zerotier-one"
-cp -f "$MODPATH/zerotier" "$zt_data/zerotier"
+# Install the only permanent copies into the private data directory.
+ui_print "- Installing private tools"
+cp -f "$MODPATH/zerotier-one" "$zt_data/zerotier-one" || abort "! Cannot install zerotier-one"
+cp -f "$MODPATH/zerotier" "$zt_data/zerotier" || abort "! Cannot install zerotier"
+ln -sf zerotier-one "$zt_data/zerotier-cli" || abort "! Cannot install zerotier-cli"
+ln -sf zerotier-one "$zt_data/zerotier-idtool" || abort "! Cannot install zerotier-idtool"
 chmod 755 "$zt_data/zerotier-one" "$zt_data/zerotier"
 rm -f "$MODPATH/zerotier-one" "$MODPATH/zerotier"
 
-# permissions
 ui_print "- Setting permissions"
 set_perm_recursive "$MODPATH" 0 0 0755 0644
-set_perm "$MODPATH/system/bin/zerotier-one" 0 0 0755
-set_perm "$MODPATH/system/bin/zerotier" 0 0 0755
+
+# Mountless by default; preserve only an explicitly saved enabled choice.
+mount_enabled=0
+if [ -f "$zt_data/mount_enabled" ]; then
+  [ "$(cat "$zt_data/mount_enabled")" = 1 ] && mount_enabled=1
+  ui_print "- Preserving saved shell command mount choice"
+else
+  ui_print "- New installs and legacy upgrades default to NO shell command mount"
+  ui_print "- After reboot, use full command paths; update scripts using short command names"
+fi
+printf '%s\n' "$mount_enabled" > "$zt_data/mount_enabled" || abort "! Cannot save mount setting"
+sh "$zt_data/zerotier" prepare-command-mount "$MODPATH" "$mount_enabled" || abort "! Cannot prepare command mount"
+if [ "$mount_enabled" = 0 ]; then
+  ui_print "- Shell command mount: disabled"
+else
+  ui_print "- Shell command mount: enabled"
+fi
+if [ "$(sh "$zt_data/zerotier" mount supported)" != 1 ]; then
+  ui_print "- Shell command mount unavailable: no enabled mounting metamodule"
+fi
 
 ui_print "- Installation complete, reboot your device"
 ui_print "- Data dir: /data/adb/zerotier"
-ui_print "- Join a network: zerotier join <network_id>"
-ui_print "- Manage: zerotier {start|stop|restart|status}"
+ui_print "- Join a network: /data/adb/zerotier/zerotier join <network_id>"
+ui_print "- Manage: /data/adb/zerotier/zerotier {start|stop|restart|status}"
+ui_print "- Change shell command mount in WebUI (requires reboot)"

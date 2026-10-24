@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -20,7 +20,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck unzip g++-aarch64-linux-gnu
+          sudo apt-get install -y git make file shellcheck zip unzip python3 g++-aarch64-linux-gnu
 
       - name: Read module metadata
         id: meta
@@ -33,39 +33,24 @@ jobs:
           echo "core_version=${core_version}" >> "$GITHUB_OUTPUT"
           echo "package_name=${package_name}" >> "$GITHUB_OUTPUT"
 
-      - name: Validate shell scripts
+      - name: Validate and test
         shell: bash
+        run: sh scripts/ci/validate.sh
+
+      - name: Compute core cache key
+        id: core-cache
         run: |
-          sh -n customize.sh
-          sh -n boot-completed.sh
-          sh -n uninstall.sh
-          sh -n zerotier
-          shellcheck customize.sh
-          shellcheck boot-completed.sh
-          shellcheck uninstall.sh
-          shellcheck zerotier
+          core_key=$(sh scripts/ci/build-core.sh --cache-key)
+          echo "key=$core_key" >> "$GITHUB_OUTPUT"
+
+      - name: Cache compiled core
+        uses: actions/cache@v6
+        with:
+          path: .cache/core
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.core-cache.outputs.key }}
 
       - name: Build zerotier-one for aarch64
-        shell: bash
-        run: |
-          core_version="${{ steps.meta.outputs.core_version }}"
-          git clone --depth 1 --branch "${core_version}" https://github.com/zerotier/ZeroTierOne.git /tmp/zt-build
-
-          cd /tmp/zt-build
-          # Remove zeroidc/smeeclient prerequisite — not needed without SSO
-          sed -i 's/$(ONE_OBJS): zeroidc smeeclient//' make-linux.mk
-
-          make -j"$(nproc)" \
-            CC=aarch64-linux-gnu-gcc \
-            CXX=aarch64-linux-gnu-g++ \
-            ZT_STATIC=1 \
-            ZT_EMBEDDED=1 \
-            one
-
-          aarch64-linux-gnu-strip zerotier-one
-          file zerotier-one
-          ls -lh zerotier-one
-          cp zerotier-one "$GITHUB_WORKSPACE/zerotier-one"
+        run: sh scripts/ci/build-core.sh
 
       - name: Create module package
         shell: bash
@@ -105,6 +90,9 @@ jobs:
           )
 
           forbidden_patterns=(
+            "^scripts/"
+            "^tests/"
+            "^\\.cache/"
             "^tmp/"
             "^dist/"
             "^\\.git/"

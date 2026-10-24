@@ -17,12 +17,16 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -32,7 +36,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-aarch64-linux-gnu
+          sudo apt-get install -y git make file shellcheck zip unzip python3 g++-aarch64-linux-gnu
 
       - name: Read module metadata
         id: meta
@@ -55,33 +59,24 @@ jobs:
           echo "release_name=${release_name}" >> "$GITHUB_OUTPUT"
           echo "package_name=${package_name}" >> "$GITHUB_OUTPUT"
 
-      - name: Validate shell scripts
+      - name: Validate and test
         shell: bash
+        run: sh scripts/ci/validate.sh
+
+      - name: Compute core cache key
+        id: core-cache
         run: |
-          sh -n customize.sh
-          sh -n boot-completed.sh
-          sh -n uninstall.sh
-          sh -n zerotier
+          core_key=$(sh scripts/ci/build-core.sh --cache-key)
+          echo "key=$core_key" >> "$GITHUB_OUTPUT"
+
+      - name: Cache compiled core
+        uses: actions/cache@v6
+        with:
+          path: .cache/core
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.core-cache.outputs.key }}
 
       - name: Build zerotier-one for aarch64
-        shell: bash
-        run: |
-          core_version="${{ steps.meta.outputs.core_version }}"
-          git clone --depth 1 --branch "${core_version}" https://github.com/zerotier/ZeroTierOne.git /tmp/zt-build
-
-          cd /tmp/zt-build
-          sed -i 's/$(ONE_OBJS): zeroidc smeeclient//' make-linux.mk
-
-          make -j"$(nproc)" \
-            CC=aarch64-linux-gnu-gcc \
-            CXX=aarch64-linux-gnu-g++ \
-            ZT_STATIC=1 \
-            ZT_EMBEDDED=1 \
-            one
-
-          aarch64-linux-gnu-strip zerotier-one
-          file zerotier-one
-          cp zerotier-one "$GITHUB_WORKSPACE/zerotier-one"
+        run: sh scripts/ci/build-core.sh
 
       - name: Create release package
         shell: bash
@@ -97,34 +92,69 @@ jobs:
             module.prop \
             uninstall.sh
 
-      - name: Generate update JSON
+      - name: Generate release notes from changelog
         shell: bash
         run: |
-          cat > dist/update.json <<EOF
-          {
-            "version": "${{ steps.meta.outputs.module_version }}",
-            "versionCode": $(sed -n 's/^versionCode=//p' module.prop),
-            "zipUrl": "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag_name }}/${{ steps.meta.outputs.package_name }}",
-            "changelog": "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/changelog.md"
-          }
-          EOF
-
-      - name: Update repository update files
-        if: ${{ !github.event.inputs.prerelease }}
-        shell: bash
-        run: |
-          cp dist/update.json update.json
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add update.json
-          git diff --cached --quiet || git commit -m "Update update.json for ${{ steps.meta.outputs.tag_name }}"
-          git push origin HEAD:${{ github.ref_name }}
+          version="${{ steps.meta.outputs.module_version }}"
+          awk -v version="$version" '
+            /^# / {
+              if (in_section) exit
+              if (index($0, version) > 0) {
+                in_section = 1
+                found = 1
+                next
+              }
+            }
+            in_section { print }
+            END {
+              if (!found) exit 1
+            }
+          ' changelog.md > dist/release_notes.md
+          sed -i -e '/./,$!d' dist/release_notes.md
+          if [ ! -s dist/release_notes.md ]; then
+            echo "No changelog content found for ${version}"
+            exit 1
+          fi
 
       - name: Create GitHub release
+        id: release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag_name }}
           name: ${{ steps.meta.outputs.release_name }}
-          prerelease: ${{ github.event.inputs.prerelease }}
+          prerelease: ${{ inputs.prerelease }}
           files: dist/${{ steps.meta.outputs.package_name }}
+          fail_on_unmatched_files: true
+          body_path: dist/release_notes.md
           generate_release_notes: true
+
+      - name: Verify public ZIP and prepare update metadata
+        if: ${{ !inputs.prerelease }}
+        env:
+          RELEASE_ASSETS: ${{ steps.release.outputs.assets }}
+          PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag_name }}
+        run: |
+          python3 scripts/ci/prepare-update.py \
+            --package "dist/$PACKAGE_NAME" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --output dist/update.json
+
+      - name: Checkout current update branch
+        if: ${{ !inputs.prerelease }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .update-metadata
+
+      - name: Publish stable update metadata
+        if: ${{ !inputs.prerelease }}
+        env:
+          UPDATE_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag_name }}
+        run: |
+          sh scripts/ci/publish-update.sh \
+            "$GITHUB_WORKSPACE/dist/update.json" \
+            "$GITHUB_WORKSPACE/.update-metadata" \
+            "$UPDATE_BRANCH" "$RELEASE_TAG"

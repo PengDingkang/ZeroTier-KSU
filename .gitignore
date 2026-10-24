@@ -1,3 +1,6 @@
 dist/
 *.zip
 zerotier-one
+.cache/
+package-list.txt
+__pycache__/
