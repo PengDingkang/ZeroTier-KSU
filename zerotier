@@ -13,6 +13,11 @@ autostart_file="$path/autostart.conf"
 log_file="$path/error.log"
 # Keep service policy separate from WireGuard (pref 1) and EasyTier (1001).
 rule_priority=1002
+# ZeroTier routes live in the main table, which Android only consults through
+# our policy rules. Rules are kept per ZeroTier destination and re-synced
+# while the service runs, because networks and managed routes change.
+route_sync_interval=5
+route_sync_pid_file="$path/route-sync.pid"
 
 # find busybox across Magisk/KSU/APatch
 for bb in /data/adb/magisk/busybox /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox; do
@@ -229,6 +234,93 @@ display_bin_status() {
   update_desc
 }
 
+# Destinations routed via ZeroTier interfaces in the main table. A default
+# route maps to "all", i.e. a rule without a destination selector.
+zt_route_destinations() {
+  ip -4 route show table main 2>/dev/null | awk '
+    {
+      for (i = 2; i < NF; i++) {
+        if ($i == "dev" && $(i + 1) ~ /^zt/) {
+          print ($1 == "default" ? "all" : $1)
+          break
+        }
+      }
+    }
+  ' | sort -u
+}
+
+# Destinations of our main-table rules; "all" is a rule without one, as
+# installed by versions that matched every destination.
+zt_rule_destinations() {
+  ip -4 rule show 2>/dev/null | awk -v pref="${rule_priority}:" '
+    $1 == pref && / lookup main/ {
+      to = "all"
+      for (i = 2; i < NF; i++) if ($i == "to") to = $(i + 1)
+      print to
+    }
+  ' | sort -u
+}
+
+add_zt_rule() {
+  if [ "$1" = all ]; then
+    ip rule add from all lookup main pref "$rule_priority" 2>/dev/null || true
+  else
+    ip rule add to "$1" lookup main pref "$rule_priority" 2>/dev/null || true
+  fi
+}
+
+clear_zt_rules() {
+  # Without a selector, deletion matches any rule at our priority.
+  cr_i=0
+  while [ "$cr_i" -lt 256 ] && ip rule del pref "$rule_priority" lookup main 2>/dev/null; do
+    cr_i=$((cr_i + 1))
+  done
+}
+
+# Match only ZeroTier destinations: a catch-all main-table rule would also
+# capture other interfaces' connected routes kept in main (e.g. the tun
+# subnets of VPN apps running in several Android users), bypassing Android's
+# per-user VPN routing.
+sync_zt_rules() {
+  sr_want=$(zt_route_destinations)
+  sr_have=$(zt_rule_destinations)
+  [ "$sr_want" = "$sr_have" ] && return 0
+  # A destination-less rule cannot be deleted selectively; rebuild instead.
+  if printf '%s\n' "$sr_have" | grep -qxF all && ! printf '%s\n' "$sr_want" | grep -qxF all; then
+    clear_zt_rules
+    sr_have=""
+  fi
+  for sr_dst in $sr_have; do
+    printf '%s\n' "$sr_want" | grep -qxF "$sr_dst" && continue
+    ip rule del to "$sr_dst" lookup main pref "$rule_priority" 2>/dev/null || true
+  done
+  for sr_dst in $sr_want; do
+    printf '%s\n' "$sr_have" | grep -qxF "$sr_dst" || add_zt_rule "$sr_dst"
+  done
+}
+
+route_sync_loop() {
+  while bin_status; do
+    sync_zt_rules
+    sleep "$route_sync_interval"
+  done
+  clear_zt_rules
+}
+
+stop_route_sync() {
+  if [ -f "$route_sync_pid_file" ]; then
+    kill "$(cat "$route_sync_pid_file" 2>/dev/null)" 2>/dev/null
+    rm -f "$route_sync_pid_file"
+  fi
+}
+
+start_route_sync() {
+  stop_route_sync
+  sync_zt_rules
+  nohup "$path/zerotier" route-sync > /dev/null 2>&1 &
+  echo "$!" > "$route_sync_pid_file"
+}
+
 start_service() {
   if bin_status; then
     echo "${bin_name} is already running"
@@ -240,7 +332,7 @@ start_service() {
   echo "$!" > "$pid_file"
   sleep 2
   if bin_status; then
-    ip rule add from all lookup main pref "$rule_priority" 2>/dev/null || true
+    start_route_sync
     echo "start success"
   else
     echo "start failed, check $log_file"
@@ -260,7 +352,8 @@ stop_service() {
   else
     echo "${bin_name} is already stopped"
   fi
-  ip rule del from all lookup main pref "$rule_priority" 2>/dev/null || true
+  stop_route_sync
+  clear_zt_rules
   rm -f "$pid_file" 2>/dev/null
 }
 
@@ -299,6 +392,7 @@ leave_network() {
 
 case "$1" in
   prepare-command-mount) prepare_command_mount "$2" "$3" ;;
+  route-sync) route_sync_loop ;;
   mount)
     case "$2" in
       enable) set_command_mount 1 ;;
